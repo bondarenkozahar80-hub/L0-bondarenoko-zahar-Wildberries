@@ -1,0 +1,27 @@
+{
+  "order_id": "order-12345",
+  "status": "created",
+  "customer_id": "cust-1",
+  "customer": {
+    "name": "Ivan Petrov",
+    "email": "ivan@example.com",
+    "phone": "+49123456789"
+  },
+  "items": [
+    {"sku":"sku-1","title":"Product A","qty":2,"price":12.5},
+    {"sku":"sku-2","title":"Product B","qty":1,"price":7.0}
+  ],
+  "delivery": {
+    "address": "Some street 1, Berlin",
+    "method": "courier",
+    "eta": "2025-09-15"
+  },
+  "payment": {
+    "method": "card",
+    "transaction_id": "tx-987",
+    "amount": 32.0,
+    "currency": "EUR"
+  },
+  "created_at": "2025-09-12T10:00:00Z",
+  "updated_at": "2025-09-12T10:00:00Z"
+}

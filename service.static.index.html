@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Order lookup</title>
+    <style>
+        body{font-family: Arial, sans-serif; margin:40px}
+        input{padding:8px; width:300px}
+        button{padding:8px 12px}
+        pre{background:#f5f5f5;padding:12px;border-radius:6px}
+    </style>
+</head>
+<body>
+<h1>Order lookup</h1>
+<p>Введите order_id:</p>
+<input id="id" placeholder="order-12345"/>
+<button id="btn">Get</button>
+<div id="result"></div>
+
+<script>
+    document.getElementById('btn').addEventListener('click', async () => {
+        const id = document.getElementById('id').value.trim();
+        if (!id) return alert('Введите order_id');
+        const res = await fetch('/api/order?order_id=' + encodeURIComponent(id));
+        if (!res.ok) {
+            document.getElementById('result').innerHTML = '<p style="color:red">Error: ' + res.status + ' ' + res.statusText + '</p>';
+            return;
+        }
+        const json = await res.json();
+        document.getElementById('result').innerHTML = '<h3>Order</h3><pre>' + JSON.stringify(json, null, 2) + '</pre>';
+    });
+</script>
+</body>
+</html>
