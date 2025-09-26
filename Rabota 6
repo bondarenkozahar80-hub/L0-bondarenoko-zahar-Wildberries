@@ -1,0 +1,175 @@
+1 Завершение по условию
+Простейший способ – внутри цикла проверять условие и return.
+
+
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func workerCondition(stopAfter int) {
+	for i := 1; ; i++ {
+		if i > stopAfter {
+			fmt.Println("workerCondition: завершение по условию")
+			return
+		}
+		fmt.Println("workerCondition:", i)
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+func main() {
+	go workerCondition(5)
+	time.Sleep(2 * time.Second)
+}
+
+
+2. Завершение через канал уведомления
+
+Используется отдельный канал done, который закрывается или в который отправляется сигнал.
+
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func workerChannel(done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			fmt.Println("workerChannel: завершение через канал")
+			return
+		default:
+			fmt.Println("workerChannel: работаю...")
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
+func main() {
+	done := make(chan struct{})
+	go workerChannel(done)
+
+	time.Sleep(2 * time.Second)
+	close(done) // сигнал на завершение
+	time.Sleep(1 * time.Second)
+}
+
+
+3. Завершение через context.Context
+
+Идиоматичный способ в Go.
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func workerContext(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("workerContext: завершение через context")
+			return
+		default:
+			fmt.Println("workerContext: работаю...")
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go workerContext(ctx)
+
+	time.Sleep(2 * time.Second)
+	cancel() // посылаем сигнал отмены
+	time.Sleep(1 * time.Second)
+}
+
+4/ Завершение через runtime.Goexit()
+
+Функция немедленно завершает текущую горутину.
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"time"
+)
+
+func workerGoexit() {
+	fmt.Println("workerGoexit: начинаю работу")
+	time.Sleep(1 * time.Second)
+	fmt.Println("workerGoexit: вызываю Goexit()")
+	runtime.Goexit()
+	// Этот код уже не выполнится
+	fmt.Println("workerGoexit: конец работы")
+}
+
+func main() {
+	go workerGoexit()
+	time.Sleep(2 * time.Second)
+}
+
+
+5. Завершение через os.Exit()
+
+Это завершает всю программу, а не только одну горутину. Но как способ – тоже возможен.
+
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+func workerExit() {
+	fmt.Println("workerExit: начинаю работу")
+	time.Sleep(1 * time.Second)
+	fmt.Println("workerExit: вызываю os.Exit(0)")
+	os.Exit(0)
+}
+
+func main() {
+	go workerExit()
+	time.Sleep(3 * time.Second) // не успеет выполниться
+	fmt.Println("main: программа завершилась бы тут")
+}
+
+6. Завершение через panic (и recover)
+
+Можно аварийно "убить" горутину через panic, и поймать её снаружи recover.
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func workerPanic() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("workerPanic: поймано:", r)
+		}
+	}()
+	for i := 1; i <= 3; i++ {
+		fmt.Println("workerPanic: шаг", i)
+		time.Sleep(500 * time.Millisecond)
+		if i == 2 {
+			panic("искусственная паника — завершаем горутину")
+		}
+	}
+}
+
+func main() {
+	go workerPanic()
+	time.Sleep(3 * time.Second)
+}
