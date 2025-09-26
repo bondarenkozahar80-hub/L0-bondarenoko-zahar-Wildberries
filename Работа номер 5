@@ -1,0 +1,42 @@
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	dataCh := make(chan int)
+	N := 5 // время работы программы в секундах
+
+	// Горутинa-отправитель
+	go func() {
+		i := 1
+		for {
+			dataCh <- i
+			i++
+			time.Sleep(500 * time.Millisecond) // имитация работы
+		}
+	}()
+
+	// Таймер для завершения
+	timeout := time.After(time.Duration(N) * time.Second)
+
+	// Читаем из канала, пока не истечёт время
+	for {
+		select {
+		case val := <-dataCh:
+			fmt.Println("Получено значение:", val)
+		case <-timeout:
+			fmt.Println("Время вышло, завершаем программу")
+			return
+		}
+	}
+}
+" Как работает программа:
+
+Запускается горутина-отправитель, которая каждые 0.5 секунды пишет числа в канал.
+
+В main через select читаем значения из канала.
+
+Одновременно ждём timeout → когда он "сработает", программа выйдет."
