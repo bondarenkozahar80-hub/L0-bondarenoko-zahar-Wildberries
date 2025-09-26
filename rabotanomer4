@@ -1,0 +1,46 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+)
+
+func worker(id int, done <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		select {
+		case <-done:
+			fmt.Printf("Worker %d: завершение работы\n", id)
+			return
+		default:
+			fmt.Printf("Worker %d: работаю...\n", id)
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
+func main() {
+	done := make(chan struct{})
+	wg := &sync.WaitGroup{}
+
+	// Запускаем 3 воркера
+	for i := 1; i <= 3; i++ {
+		wg.Add(1)
+		go worker(i, done, wg)
+	}
+
+	// Ловим Ctrl+C
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	<-sigCh
+	fmt.Println("\nПолучен сигнал, завершаем...")
+	close(done) // оповещаем всех воркеров
+
+	wg.Wait()
+	fmt.Println("Все воркеры завершены")
+}
