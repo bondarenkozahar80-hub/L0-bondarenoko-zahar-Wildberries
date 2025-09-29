@@ -1,0 +1,130 @@
+Задание 7. 
+пример на Go, показывающий безопасную запись в map несколькими горутинами двумя способами:
+используя sync.Mutex (классический подход), используя sync.Map (встроенная конкурентная карта).
+Также я включил (закомментированный) пример опасного варианта, чтобы вы могли проверить детектор гонок (-race) и увидеть разницу.
+
+Обычный запуск (без детектора гонок):
+go run main.go
+
+Проверка с детектором гонок:
+go run -race main.go
+
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+// Параметры нагрузки
+const (
+	numWriters    = 50  // сколько горутин будут писать
+	writesPerGor  = 100 // сколько записей каждая горутина делает
+)
+
+// =====================
+// 1) Безопасный через sync.Mutex
+// =====================
+func mutexProtectedMap() {
+	fmt.Println("=== mutexProtectedMap ===")
+	m := make(map[int]int)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	wg.Add(numWriters)
+	for i := 0; i < numWriters; i++ {
+		go func(id int) {
+			defer wg.Done()
+			base := id * 1000000
+			for j := 0; j < writesPerGor; j++ {
+				key := base + j
+				mu.Lock()
+				m[key] = id // записываем id автора
+				mu.Unlock()
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Несколько проверок: общее число элементов и пара выборочных ключей
+	fmt.Printf("len(map) = %d (ожидается %d)\n", len(m), numWriters*writesPerGor)
+	// выборочные чтения (нужно блокировать чтение тоже, т.к. m — обычная map)
+	mu.Lock()
+	for k := 0; k < 5; k++ {
+		// берем произвольный ключ из диапазона первой горутины
+		key := 0*1000000 + k
+		fmt.Printf("m[%d] = %d\n", key, m[key])
+	}
+	mu.Unlock()
+}
+
+// =====================
+// 2) Безопасный через sync.Map
+// =====================
+func syncMapExample() {
+	fmt.Println("=== syncMapExample ===")
+	var sm sync.Map
+	var wg sync.WaitGroup
+
+	wg.Add(numWriters)
+	for i := 0; i < numWriters; i++ {
+		go func(id int) {
+			defer wg.Done()
+			base := id * 1000000
+			for j := 0; j < writesPerGor; j++ {
+				key := base + j
+				sm.Store(key, id)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Подсчитаем количество элементов в sync.Map (через Range)
+	count := 0
+	sm.Range(func(k, v interface{}) bool {
+		count++
+		return true
+	})
+	fmt.Printf("sync.Map count = %d (ожидается %d)\n", count, numWriters*writesPerGor)
+
+	// пример чтения
+	if val, ok := sm.Load(0); ok {
+		fmt.Printf("sm.Load(0) = %v\n", val)
+	}
+}
+
+// =====================
+// 3) (Опционально) Небезопасный пример — для проверки go run -race
+// =====================
+// Если хотите увидеть гонки, раскомментируйте вызов в main().
+// ВНИМАНИЕ: запуск с -race покажет предупреждения о гонках.
+// func unsafeMap() {
+//     fmt.Println("=== unsafeMap (race expected) ===")
+//     m := make(map[int]int)
+//     var wg sync.WaitGroup
+//     wg.Add(numWriters)
+//     for i := 0; i < numWriters; i++ {
+//         go func(id int) {
+//             defer wg.Done()
+//             base := id * 1000000
+//             for j := 0; j < writesPerGor; j++ {
+//                 key := base + j
+//                 // НЕТ блокировки — гонка!
+//                 m[key] = id
+//             }
+//         }(i)
+//     }
+//     wg.Wait()
+//     fmt.Printf("len(unsafe map) = %d\n", len(m))
+// }
+
+func main() {
+	// Демонстрируем два безопасных варианта.
+	mutexProtectedMap()
+	syncMapExample()
+
+	// Если хотите проверить гонку: раскомментируйте ниже и запустите с -race.
+	// unsafeMap()
+}
