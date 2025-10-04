@@ -1,0 +1,32 @@
+
+
+
+
+package main
+
+import (
+	"fmt"
+)
+
+func setBit(x int64, i int, value int) int64 {
+	if value == 1 {
+		// Установить i-й бит в 1
+		return x | (1 << i)
+	} else {
+		// Установить i-й бит в 0
+		return x &^ (1 << i)
+	}
+}
+
+func main() {
+	var num int64 = 5 // 0101₂
+	fmt.Printf("Исходное число: %d (%04b)\n", num, num)
+
+	// Установим 1-й бит в 0
+	result := setBit(num, 1, 0)
+	fmt.Printf("После установки 1-го бита в 0: %d (%04b)\n", result, result)
+
+	// Установим 2-й бит в 1
+	result = setBit(num, 2, 1)
+	fmt.Printf("После установки 2-го бита в 1: %d (%04b)\n", result, result)
+}
