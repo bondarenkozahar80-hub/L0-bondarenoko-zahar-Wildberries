@@ -1,0 +1,31 @@
+1.12
+
+package main
+
+import (
+	"fmt"
+)
+
+func uniqueWords(words []string) []string {
+	set := make(map[string]struct{}) // создаём множество
+	var result []string
+
+	for _, word := range words {
+		if _, exists := set[word]; !exists { // проверяем, встречался ли элемент
+			set[word] = struct{}{}        // добавляем в множество
+			result = append(result, word) // добавляем в результат
+		}
+	}
+
+	return result
+}
+
+func main() {
+	words := []string{"cat", "cat", "dog", "cat", "tree"}
+	unique := uniqueWords(words)
+	fmt.Println("Множество уникальных слов:", unique)
+}
+
+
+//Создаём map[string]struct{} для хранения уникальных слов.Проходим по каждому слову:
+Если слова ещё нет в множестве — добавляем в map и результат.Возвращаем слайс уникальных слов.
