@@ -1,0 +1,34 @@
+package main
+
+import "fmt"
+
+// binarySearch ищет target в отсортированном слайсе arr.
+// Возвращает индекс элемента или -1, если элемент не найден.
+func binarySearch(arr []int, target int) int {
+	low, high := 0, len(arr)-1
+
+	for low <= high {
+		mid := (low + high) / 2
+		if arr[mid] == target {
+			return mid
+		} else if arr[mid] < target {
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return -1
+}
+
+func main() {
+	arr := []int{1, 3, 5, 7, 9, 11, 13}
+	target := 7
+
+	index := binarySearch(arr, target)
+	if index != -1 {
+		fmt.Printf("Элемент %d найден на индексе %d\n", target, index)
+	} else {
+		fmt.Printf("Элемент %d не найден\n", target)
+	}
+}
