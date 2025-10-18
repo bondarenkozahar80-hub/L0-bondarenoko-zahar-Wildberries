@@ -1,10 +1,24 @@
+package main
+
+import "fmt"
+
 var justString string
 
+func createHugeString(n int) string {
+	s := make([]byte, n)
+	for i := 0; i < n; i++ {
+		s[i] = 'a'
+	}
+	return string(s)
+}
+
 func someFunc() {
-	v := createHugeString(1 << 10) // создаём очень большую строку
-	justString = v[:100]            // берём только первые 100 байт
+	v := createHugeString(1 << 10) // 1024 байта
+	// Создаём новую строку из первых 100 байт
+	justString = string([]byte(v[:100]))
 }
 
 func main() {
 	someFunc()
+	fmt.Println(justString)
 }
