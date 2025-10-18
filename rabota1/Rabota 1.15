@@ -1,0 +1,10 @@
+var justString string
+
+func someFunc() {
+	v := createHugeString(1 << 10) // создаём очень большую строку
+	justString = v[:100]            // берём только первые 100 байт
+}
+
+func main() {
+	someFunc()
+}
