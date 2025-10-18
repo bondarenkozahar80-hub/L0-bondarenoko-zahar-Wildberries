@@ -1,0 +1,44 @@
+1.11
+package main
+
+import (
+	"fmt"
+)
+
+func intersection(a, b []int) []int {
+	set := make(map[int]bool)
+	var result []int
+
+	// Добавляем все элементы из первого слайса в множество
+	for _, v := range a {
+		set[v] = true
+	}
+
+	// Проверяем элементы второго слайса
+	for _, v := range b {
+		if set[v] {
+			result = append(result, v)
+			delete(set, v) // чтобы избежать дубликатов
+		}
+	}
+
+	return result
+}
+
+func main() {
+	A := []int{1, 2, 3}
+	B := []int{2, 3, 4}
+
+	inter := intersection(A, B)
+	fmt.Println("Пересечение:", inter)
+}
+
+Создаётся map[int]bool для хранения элементов первого множества.
+
+Проходим по элементам второго множества:
+
+Если элемент есть в map, добавляем его в результат.
+
+Удаляем из map, чтобы не добавить повторно.
+
+Возвращаем результат как слайс.
