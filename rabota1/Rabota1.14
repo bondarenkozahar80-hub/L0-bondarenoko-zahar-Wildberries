@@ -1,0 +1,25 @@
+package main
+
+import "fmt"
+
+func detectType(v interface{}) {
+	switch v := v.(type) {
+	case int:
+		fmt.Println("Тип: int, значение:", v)
+	case string:
+		fmt.Println("Тип: string, значение:", v)
+	case bool:
+		fmt.Println("Тип: bool, значение:", v)
+	case chan int:
+		fmt.Println("Тип: chan int, значение:", v)
+	default:
+		fmt.Println("Неизвестный тип")
+	}
+}
+
+func main() {
+	detectType(42)
+	detectType("hello")
+	detectType(true)
+	detectType(make(chan int))
+}
