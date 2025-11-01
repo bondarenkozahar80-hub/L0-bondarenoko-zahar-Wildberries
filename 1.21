@@ -1,0 +1,34 @@
+package main
+
+import "fmt"
+
+// Старый тип с несовместимым интерфейсом
+type OldPrinter struct{}
+
+func (o *OldPrinter) PrintOld(s string) {
+	fmt.Println("OldPrinter:", s)
+}
+
+// Новый интерфейс, который ожидает клиент
+type Printer interface {
+	Print(s string)
+}
+
+// Адаптер превращает OldPrinter в Printer
+type PrinterAdapter struct {
+	oldPrinter *OldPrinter
+}
+
+func (a *PrinterAdapter) Print(s string) {
+	// Делегируем вызов старому методу
+	a.oldPrinter.PrintOld(s)
+}
+
+func main() {
+	old := &OldPrinter{}
+	adapter := &PrinterAdapter{oldPrinter: old}
+
+	// Клиент работает с интерфейсом Printer, не зная о старом типе
+	var p Printer = adapter
+	p.Print("Hello, Adapter Pattern!")
+}
