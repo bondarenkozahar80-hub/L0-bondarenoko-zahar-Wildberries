@@ -1,0 +1,32 @@
+package main
+
+import (
+	"fmt"
+	"math/big"
+)
+
+func main() {
+	// Задаём два больших числа (больше 2^20)
+	a := big.NewInt(2_000_000)
+	b := big.NewInt(3_000_000)
+
+	// Сложение
+	sum := new(big.Int).Add(a, b)
+	fmt.Println("Сумма:", sum)
+
+	// Вычитание
+	diff := new(big.Int).Sub(a, b)
+	fmt.Println("Разность:", diff)
+
+	// Умножение
+	product := new(big.Int).Mul(a, b)
+	fmt.Println("Произведение:", product)
+
+	// Деление (целочисленное)
+	if b.Cmp(big.NewInt(0)) != 0 {
+		quotient := new(big.Int).Div(a, b)
+		fmt.Println("Частное:", quotient)
+	} else {
+		fmt.Println("Деление на ноль!")
+	}
+}
