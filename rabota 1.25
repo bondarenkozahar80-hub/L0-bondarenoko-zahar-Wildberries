@@ -1,0 +1,26 @@
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func Sleep(d time.Duration) {
+	ch := make(chan struct{})
+
+	// Запускаем горутину-таймер
+	go func() {
+		time.AfterFunc(d, func() {
+			ch <- struct{}{}
+		})
+	}()
+
+	// Блокируем текущую горутину до получения сигнала
+	<-ch
+}
+
+func main() {
+	fmt.Println("Start")
+	Sleep(2 * time.Second)
+	fmt.Println("End")
+}
