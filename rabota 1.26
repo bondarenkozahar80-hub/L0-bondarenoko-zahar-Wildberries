@@ -1,0 +1,27 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+func hasAllUniqueChars(s string) bool {
+	s = strings.ToLower(s)      // делаем регистронезависимой
+	seen := make(map[rune]bool) // множество (set) символов
+
+	for _, ch := range s {
+		if seen[ch] {
+			return false // символ уже встречался
+		}
+		seen[ch] = true
+	}
+	return true
+}
+
+func main() {
+	tests := []string{"abcd", "abCdefAaf", "aabcd"}
+
+	for _, t := range tests {
+		fmt.Printf("%s -> %v\n", t, hasAllUniqueChars(t))
+	}
+}
