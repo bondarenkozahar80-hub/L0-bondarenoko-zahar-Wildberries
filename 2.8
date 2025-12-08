@@ -1,0 +1,24 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/beevik/ntp"
+)
+
+func main() {
+	// Можно использовать любой NTP-сервер, классический — pool.ntp.org
+	const server = "pool.ntp.org"
+
+	t, err := ntp.Time(server)
+	if err != nil {
+		// Вывод в STDERR:
+		fmt.Fprintln(os.Stderr, "NTP error:", err)
+		// Ненулевой код выхода:
+		os.Exit(1)
+	}
+
+	// Идиоматично: печатаем только результат
+	fmt.Println("Точное время:", t)
+}
