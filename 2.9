@@ -1,0 +1,149 @@
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
+)
+
+// ErrInvalidString возвращается при некорректном формате входной строки
+var ErrInvalidString = errors.New("invalid string")
+
+// Unpack выполняет распаковку строки
+func Unpack(s string) (string, error) {
+	var result strings.Builder
+	runes := []rune(s)
+	length := len(runes)
+	// Обработка пустой строки
+	if length == 0 {
+		return "", nil
+	}
+	// Проверка: строка не должна начинаться с цифры
+	if unicode.IsDigit(runes[0]) {
+		return "", ErrInvalidString
+	}
+	i := 0
+	for i < length {
+		current := runes[i]
+		// Если текущий символ - экранирующий слэш
+		if current == '\\' {
+			// Проверяем, что после слэша есть символ
+			if i+1 >= length {
+				return "", ErrInvalidString
+			}
+			next := runes[i+1]
+			// Проверяем, есть ли после экранированного символа цифра
+			count := 1
+			if i+2 < length && unicode.IsDigit(runes[i+2]) {
+				// Читаем полное число
+				numStart := i + 2
+				numEnd := numStart
+				for numEnd < length && unicode.IsDigit(runes[numEnd]) {
+					numEnd++
+				}
+				// Преобразуем строку с числом в int
+				numStr := string(runes[numStart:numEnd])
+				n, err := strconv.Atoi(numStr)
+				if err != nil {
+					return "", ErrInvalidString
+				}
+				count = n
+				i = numEnd // Пропускаем цифры
+			} else {
+				i += 2 // Пропускаем \ и следующий символ
+			}
+			// Добавляем экранированный символ нужное количество раз
+			for j := 0; j < count; j++ {
+				result.WriteRune(next)
+			}
+			continue
+		}
+		// Если текущий символ не цифра и не экранирующий слэш
+		if !unicode.IsDigit(current) {
+			// Проверяем, есть ли после него цифра
+			count := 1
+			if i+1 < length && unicode.IsDigit(runes[i+1]) {
+				// Читаем полное число
+				numStart := i + 1
+				numEnd := numStart
+				for numEnd < length && unicode.IsDigit(runes[numEnd]) {
+					numEnd++
+				}
+				// Преобразуем строку с числом в int
+				numStr := string(runes[numStart:numEnd])
+				n, err := strconv.Atoi(numStr)
+				if err != nil {
+					return "", ErrInvalidString
+				}
+				count = n
+				i = numEnd - 1 // -1 т.к. в конце цикла будет i++
+			}
+			// Добавляем символ нужное количество раз
+			for j := 0; j < count; j++ {
+				result.WriteRune(current)
+			}
+		} else {
+			// Если встретили цифру не после символа - ошибка
+			return "", ErrInvalidString
+		}
+		i++
+	}
+	return result.String(), nil
+}
+
+func main() {
+	// Примеры использования
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"a4bc2d5e", "aaaabccddddde"},
+		{"abcd", "abcd"},
+		{"45", ""}, // будет ошибка
+		{"", ""},
+		{"qwe\\4\\5", "qwe45"},
+		{"qwe\\45", "qwe44444"},
+		{"a10", "aaaaaaaaaa"},
+		{"\\2a3", "2aaa"},
+		{"a\\2b\\3c", "a2b3c"},
+	}
+	for _, test := range tests {
+		result, err := Unpack(test.input)
+		if err != nil {
+			fmt.Printf("Unpack(%q) = error: %v\n", test.input, err)
+		} else {
+			fmt.Printf("Unpack(%q) = %q\n", test.input, result)
+		}
+	}
+}
+
+// Простые unit-тесты
+func TestUnpack() {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{"basic unpacking", "a4bc2d5e", "aaaabccddddde", false},
+		{"no digits", "abcd", "abcd", false},
+		{"invalid string", "45", "", true},
+		{"empty string", "", "", false},
+		{"escaped digits", "qwe\\4\\5", "qwe45", false},
+		{"escaped with multiplier", "qwe\\45", "qwe44444", false},
+		{"large number", "a10", "aaaaaaaaaa", false},
+		{"escaped backslash", "qwe\\\\5", "qwe\\\\\\\\\\", false},
+	}
+	for _, tt := range tests {
+		got, err := Unpack(tt.input)
+		if (err != nil) != tt.wantErr {
+			fmt.Printf("FAIL %s: expected error=%v, got error=%v\n", tt.name, tt.wantErr, err)
+			continue
+		}
+		if got != tt.expected {
+			fmt.Printf("FAIL %s: expected %q, got %q\n", tt.name, tt.expected, got)
+			continue
+		}
+		fmt.Printf("PASS %s\n", tt.name)
+	}
+}
