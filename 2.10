@@ -1,0 +1,302 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Config содержит конфигурацию сортировки
+type Config struct {
+	keyColumn      int
+	numericSort    bool
+	reverseSort    bool
+	uniqueOnly     bool
+	monthSort      bool
+	ignoreBlanks   bool
+	checkSorted    bool
+	humanNumeric   bool
+	columnDelim    string
+	inputFilename  string
+	outputFilename string
+}
+
+// MonthMap преобразует названия месяцев в числовые значения
+var MonthMap = map[string]int{
+	"jan": 1, "feb": 2, "mar": 3, "apr": 4,
+	"may": 5, "jun": 6, "jul": 7, "aug": 8,
+	"sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+// HumanSuffixMap преобразует суффиксы размеров в множители
+var HumanSuffixMap = map[string]float64{
+	"k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024,
+	"t": 1024 * 1024 * 1024 * 1024,
+	"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024,
+	"T": 1024 * 1024 * 1024 * 1024,
+}
+
+// Line представляет строку с её ключом для сортировки
+type Line struct {
+	original string
+	key      string
+	numKey   float64
+	monthKey int
+	humanKey float64
+}
+
+// Lines представляет срез строк для сортировки
+type Lines []Line
+
+// Реализация интерфейса sort.Interface для Lines
+func (l Lines) Len() int           { return len(l) }
+func (l Lines) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+func (l Lines) Less(i, j int) bool { return compareLines(l[i], l[j]) < 0 }
+
+// compareLines сравнивает две строки в соответствии с конфигурацией
+func compareLines(a, b Line) int {
+	// Сравнение по числовому ключу (если включена числовая сортировка)
+	if config.numericSort {
+		if a.numKey != b.numKey {
+			return int(a.numKey - b.numKey)
+		}
+	}
+
+	// Сравнение по человеко-читаемым числам (если включен флаг -h)
+	if config.humanNumeric {
+		if a.humanKey != b.humanKey {
+			if a.humanKey < b.humanKey {
+				return -1
+			}
+			return 1
+		}
+	}
+
+	// Сравнение по месяцам (если включен флаг -M)
+	if config.monthSort {
+		if a.monthKey != b.monthKey {
+			return a.monthKey - b.monthKey
+		}
+	}
+
+	// Сравнение по строковому ключу
+	return strings.Compare(a.key, b.key)
+}
+
+// extractKey извлекает ключ для сортировки из строки
+func extractKey(line string, config Config) Line {
+	result := Line{original: line}
+	// Удаление хвостовых пробелов, если указан флаг -b
+	if config.ignoreBlanks {
+		line = strings.TrimRight(line, " \t")
+	}
+
+	// Извлечение колонки, если указан флаг -k
+	if config.keyColumn > 0 {
+		columns := strings.Split(line, config.columnDelim)
+		if config.keyColumn <= len(columns) {
+			result.key = columns[config.keyColumn-1]
+		}
+	} else {
+		result.key = line
+	}
+
+	// Преобразование в числовой ключ, если указан флаг -n
+	if config.numericSort {
+		num, err := strconv.ParseFloat(result.key, 64)
+		if err == nil {
+			result.numKey = num
+		}
+	}
+
+	// Преобразование в ключ месяца, если указан флаг -M
+	if config.monthSort {
+		month := strings.ToLower(result.key[:3]) // Берем первые 3 символа
+		if val, ok := MonthMap[month]; ok {
+			result.monthKey = val
+		}
+	}
+
+	// Преобразование в человеко-читаемый числовой ключ, если указан флаг -h
+	if config.humanNumeric {
+		result.humanKey = parseHumanNumber(result.key)
+	}
+
+	return result
+}
+
+// parseHumanNumber преобразует строку с суффиксом в число
+func parseHumanNumber(s string) float64 {
+	s = strings.TrimSpace(s)
+	// Регулярное выражение для поиска числа с суффиксом
+	re := regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([kKmMgGtT])?$`)
+	matches := re.FindStringSubmatch(s)
+	if matches == nil {
+		return 0
+	}
+
+	num, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return 0
+	}
+
+	if len(matches) > 2 && matches[2] != "" {
+		if multiplier, ok := HumanSuffixMap[matches[2]]; ok {
+			num *= multiplier
+		}
+	}
+
+	return num
+}
+
+// readLines читает строки из файла или STDIN
+func readLines(config Config) ([]string, error) {
+	var input io.Reader
+	if config.inputFilename != "" {
+		file, err := os.Open(config.inputFilename)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка открытия файла: %v", err)
+		}
+		defer file.Close()
+		input = file
+	} else {
+		input = os.Stdin
+	}
+
+	var lines []string
+	scanner := bufio.NewScanner(input)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения: %v", err)
+	}
+	return lines, nil
+}
+
+// writeLines записывает строки в файл или STDOUT
+func writeLines(lines []string, config Config) error {
+	var output io.Writer
+	if config.outputFilename != "" {
+		file, err := os.Create(config.outputFilename)
+		if err != nil {
+			return fmt.Errorf("ошибка создания файла: %v", err)
+		}
+		defer file.Close()
+		output = file
+	} else {
+		output = os.Stdout
+	}
+
+	writer := bufio.NewWriter(output)
+	for _, line := range lines {
+		fmt.Fprintln(writer, line)
+	}
+	return writer.Flush()
+}
+
+// isSorted проверяет, отсортированы ли строки
+func isSorted(lines []Line, config Config) bool {
+	for i := 1; i < len(lines); i++ {
+		if compareLines(lines[i-1], lines[i]) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// processLines обрабатывает строки в соответствии с конфигурацией
+func processLines(lines []string, config Config) ([]string, error) {
+	// Извлечение ключей для сортировки
+	var lineObjs Lines
+	for _, line := range lines {
+		lineObjs = append(lineObjs, extractKey(line, config))
+	}
+
+	// Проверка сортировки, если указан флаг -c
+	if config.checkSorted {
+		if isSorted(lineObjs, config) {
+			fmt.Println("Данные отсортированы")
+			return lines, nil
+		}
+		fmt.Println("Данные не отсортированы")
+		return lines, nil
+	}
+
+	// Сортировка
+	sort.Sort(lineObjs)
+
+	// Реверс, если указан флаг -r
+	if config.reverseSort {
+		for i, j := 0, len(lineObjs)-1; i < j; i, j = i+1, j-1 {
+			lineObjs[i], lineObjs[j] = lineObjs[j], lineObjs[i]
+		}
+	}
+
+	// Удаление дубликатов, если указан флаг -u
+	var result []string
+	seen := make(map[string]bool)
+	for _, obj := range lineObjs {
+		if config.uniqueOnly {
+			if seen[obj.original] {
+				continue
+			}
+			seen[obj.original] = true
+		}
+		result = append(result, obj.original)
+	}
+
+	return result, nil
+}
+
+// Глобальная переменная конфигурации
+var config Config
+
+func main() {
+	// Парсинг флагов
+	flag.IntVar(&config.keyColumn, "k", 0, "сортировать по колонке N (разделитель - табуляция)")
+	flag.BoolVar(&config.numericSort, "n", false, "сортировать по числовому значению")
+	flag.BoolVar(&config.reverseSort, "r", false, "сортировать в обратном порядке")
+	flag.BoolVar(&config.uniqueOnly, "u", false, "выводить только уникальные строки")
+	flag.BoolVar(&config.monthSort, "M", false, "сортировать по названию месяца")
+	flag.BoolVar(&config.ignoreBlanks, "b", false, "игнорировать хвостовые пробелы")
+	flag.BoolVar(&config.checkSorted, "c", false, "проверить, отсортированы ли данные")
+	flag.BoolVar(&config.humanNumeric, "h", false, "сортировать по человеко-читаемым размерам")
+	var delim string
+	flag.StringVar(&delim, "t", "\t", "разделитель колонок")
+	var inputFile, outputFile string
+	flag.StringVar(&inputFile, "i", "", "входной файл (если не указан, читает из STDIN)")
+	flag.StringVar(&outputFile, "o", "", "выходной файл (если не указан, пишет в STDOUT)")
+	flag.Parse()
+
+	// Обновление конфигурации
+	config.columnDelim = delim
+	config.inputFilename = inputFile
+	config.outputFilename = outputFile
+
+	// Чтение строк
+	lines, err := readLines(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Ошибка: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Обработка строк
+	result, err := processLines(lines, config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Ошибка: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Запись результата
+	if err := writeLines(result, config); err != nil {
+		fmt.Fprintf(os.Stderr, "Ошибка: %v\n", err)
+		os.Exit(1)
+	}
+}
