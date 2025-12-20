@@ -1,0 +1,242 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+)
+
+// Config содержит конфигурацию фильтрации
+type Config struct {
+	after      int
+	before     int
+	context    int
+	count      bool
+	ignoreCase bool
+	invert     bool
+	fixed      bool
+	lineNum    bool
+	pattern    string
+	filename   string
+}
+
+// Line представляет строку с номером
+type Line struct {
+	Num    int
+	Text   string
+	Matched bool
+}
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	config := parseFlags()
+
+	// Определяем источник ввода
+	var input io.Reader
+	if config.filename == "" || config.filename == "-" {
+		input = os.Stdin
+	} else {
+		file, err := os.Open(config.filename)
+		if err != nil {
+			return fmt.Errorf("cannot open file: %w", err)
+		}
+		defer file.Close()
+		input = file
+	}
+
+	// Читаем все строки
+	lines, err := readLines(input)
+	if err != nil {
+		return fmt.Errorf("cannot read input: %w", err)
+	}
+
+	// Применяем фильтр и выводим результат
+	return filterAndPrint(lines, config)
+}
+
+func parseFlags() Config {
+	var config Config
+
+	flag.IntVar(&config.after, "A", 0, "print N lines after match")
+	flag.IntVar(&config.before, "B", 0, "print N lines before match")
+	flag.IntVar(&config.context, "C", 0, "print N lines of context")
+	flag.BoolVar(&config.count, "c", false, "print only count of matching lines")
+	flag.BoolVar(&config.ignoreCase, "i", false, "ignore case")
+	flag.BoolVar(&config.invert, "v", false, "invert match")
+	flag.BoolVar(&config.fixed, "F", false, "treat pattern as fixed string")
+	flag.BoolVar(&config.lineNum, "n", false, "print line numbers")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] PATTERN [FILE]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "If FILE is not specified or is '-', reads from STDIN\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
+	}
+
+	flag.Parse()
+
+	// Обрабатываем -C флаг (контекст)
+	if config.context > 0 {
+		config.before = config.context
+		config.after = config.context
+	}
+
+	// Получаем паттерн и имя файла из аргументов
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	config.pattern = args[0]
+	if len(args) > 1 {
+		config.filename = args[1]
+	}
+
+	return config
+}
+
+func readLines(r io.Reader) ([]Line, error) {
+	var lines []Line
+	scanner := bufio.NewScanner(r)
+	lineNum := 1
+
+	for scanner.Scan() {
+		lines = append(lines, Line{
+			Num:  lineNum,
+			Text: scanner.Text(),
+		})
+		lineNum++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return lines, nil
+}
+
+func filterAndPrint(lines []Line, config Config) error {
+	// Подготавливаем паттерн
+	pattern := config.pattern
+	if config.ignoreCase {
+		pattern = "(?i)" + pattern
+	}
+	if config.fixed {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid pattern: %w", err)
+	}
+
+	// Помечаем совпадающие строки
+	for i := range lines {
+		matched := re.MatchString(lines[i].Text)
+		if config.invert {
+			lines[i].Matched = !matched
+		} else {
+			lines[i].Matched = matched
+		}
+	}
+
+	// Если нужен только счетчик
+	if config.count {
+		count := 0
+		for _, line := range lines {
+			if line.Matched {
+				count++
+			}
+		}
+		fmt.Println(count)
+		return nil
+	}
+
+	// Определяем, какие строки нужно вывести с учетом контекста
+	printLine := make([]bool, len(lines))
+	var mu sync.Mutex
+
+	// Используем WaitGroup для параллельной обработки
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10) // Ограничиваем параллелизм
+
+	for i, line := range lines {
+		if line.Matched {
+			wg.Add(1)
+			semaphore <- struct{}{}
+
+			go func(idx int) {
+				defer wg.Done()
+				defer func() { <-semaphore }()
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				// Отмечаем строку как печатаемую
+				printLine[idx] = true
+
+				// Добавляем строки до совпадения
+				start := idx - config.before
+				if start < 0 {
+					start = 0
+				}
+				for j := start; j < idx; j++ {
+					printLine[j] = true
+				}
+
+				// Добавляем строки после совпадения
+				end := idx + config.after + 1
+				if end > len(lines) {
+					end = len(lines)
+				}
+				for j := idx + 1; j < end; j++ {
+					printLine[j] = true
+				}
+			}(i)
+		}
+	}
+
+	wg.Wait()
+
+	// Выводим результат
+	lastPrinted := -1
+	for i, line := range lines {
+		if printLine[i] {
+			// Добавляем разделитель между группами контекста
+			if lastPrinted >= 0 && i-lastPrinted > 1 {
+				fmt.Println("--")
+			}
+
+			// Формируем вывод строки
+			var output strings.Builder
+
+			if config.lineNum {
+				// Подсвечиваем номер совпавшей строки
+				if line.Matched {
+					fmt.Fprintf(&output, "\033[1m%d:\033[0m", line.Num)
+				} else {
+					fmt.Fprintf(&output, "%d-", line.Num)
+				}
+			}
+
+			output.WriteString(line.Text)
+
+			fmt.Println(output.String())
+			lastPrinted = i
+		}
+	}
+
+	return nil
+}
