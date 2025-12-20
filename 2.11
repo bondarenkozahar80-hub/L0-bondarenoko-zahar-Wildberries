@@ -1,0 +1,69 @@
+package main
+
+import (
+	"sort"
+	"strings"
+)
+
+func FindAnagrams(words []string) map[string][]string {
+	// Приводим все слова к нижнему регистру
+	lowerWords := make([]string, len(words))
+	for i, word := range words {
+		lowerWords[i] = strings.ToLower(word)
+	}
+
+	// Мапа для группировки анаграмм
+	anagramMap := make(map[string][]string)
+	// Мапа для связи отсортированной версии слова с первым встреченным словом
+	firstWordMap := make(map[string]string)
+
+	for _, word := range lowerWords {
+		// Сортируем буквы слова для получения ключа анаграммы
+		sortedWord := sortString(word)
+		// Если это первое слово для данной анаграммы
+		if firstWord, exists := firstWordMap[sortedWord]; !exists {
+			firstWordMap[sortedWord] = word
+			anagramMap[word] = []string{word}
+		} else {
+			// Добавляем слово в соответствующее множество
+			anagramMap[firstWord] = append(anagramMap[firstWord], word)
+		}
+	}
+
+	// Удаляем множества из одного элемента и сортируем результаты
+	result := make(map[string][]string)
+	for key, values := range anagramMap {
+		if len(values) > 1 {
+			// Удаляем дубликаты и сортируем
+			uniqueSorted := uniqueAndSort(values)
+			result[key] = uniqueSorted
+		}
+	}
+
+	return result
+}
+
+// Вспомогательная функция для сортировки букв в слове
+func sortString(s string) string {
+	chars := strings.Split(s, "")
+	sort.Strings(chars)
+	return strings.Join(chars, "")
+}
+
+// Вспомогательная функция для удаления дубликатов и сортировки
+func uniqueAndSort(words []string) []string {
+	// Используем мапу для удаления дубликатов
+	seen := make(map[string]bool)
+	unique := make([]string, 0, len(words))
+
+	for _, word := range words {
+		if !seen[word] {
+			seen[word] = true
+			unique = append(unique, word)
+		}
+	}
+
+	// Сортируем уникальные слова
+	sort.Strings(unique)
+	return unique
+}
