@@ -1,0 +1,312 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Range представляет диапазон полей
+type Range struct {
+	start int
+	end   int
+}
+
+// FieldSelector обрабатывает выбор полей
+type FieldSelector struct {
+	ranges []Range
+}
+
+// NewFieldSelector создает новый селектор полей на основе строки спецификации
+func NewFieldSelector(spec string) (*FieldSelector, error) {
+	parts := strings.Split(spec, ",")
+	ranges := make([]Range, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Проверяем, является ли часть диапазоном
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("неверный формат диапазона: %s", part)
+			}
+			start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("неверное начальное значение: %s", rangeParts[0])
+			}
+			end, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("неверное конечное значение: %s", rangeParts[1])
+			}
+			if start < 1 || end < 1 {
+				return nil, fmt.Errorf("номера полей должны быть положительными")
+			}
+			if start > end {
+				// Меняем местами, если начало больше конца
+				start, end = end, start
+			}
+			ranges = append(ranges, Range{start: start, end: end})
+		} else {
+			// Одиночное поле
+			field, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("неверный номер поля: %s", part)
+			}
+			if field < 1 {
+				return nil, fmt.Errorf("номера полей должны быть положительными")
+			}
+			ranges = append(ranges, Range{start: field, end: field})
+		}
+	}
+	return &FieldSelector{ranges: ranges}, nil
+}
+
+// SelectFields выбирает указанные поля из среза
+func (fs *FieldSelector) SelectFields(fields []string) []string {
+	if len(fs.ranges) == 0 {
+		return nil
+	}
+	selected := make([]string, 0)
+	used := make(map[int]bool)
+	for _, r := range fs.ranges {
+		for i := r.start; i <= r.end; i++ {
+			// Проверяем границы и уникальность
+			if i-1 < len(fields) && !used[i] {
+				selected = append(selected, fields[i-1])
+				used[i] = true
+			}
+		}
+	}
+	return selected
+}
+
+// ProcessLine обрабатывает одну строку
+func ProcessLine(line string, delimiter string, onlySeparated bool, selector *FieldSelector) (string, bool) {
+	// Если установлен флаг onlySeparated и строка не содержит разделитель, пропускаем
+	if onlySeparated && !strings.Contains(line, delimiter) {
+		return "", false
+	}
+	// Разбиваем строку по разделителю
+	fields := strings.Split(line, delimiter)
+	// Если разделителя нет, возвращаем всю строку
+	if len(fields) == 1 && delimiter != "" {
+		return line, true
+	}
+	// Выбираем нужные поля
+	selectedFields := selector.SelectFields(fields)
+	// Если не выбрано ни одного поля, возвращаем пустую строку
+	if len(selectedFields) == 0 {
+		return "", true
+	}
+	// Собираем результат с исходным разделителем
+	return strings.Join(selectedFields, delimiter), true
+}
+
+func main() {
+	// Парсинг аргументов командной строки
+	fieldsFlag := flag.String("f", "", "номера полей для вывода (например: 1,3-5)")
+	delimiterFlag := flag.String("d", "\t", "разделитель полей")
+	separatedFlag := flag.Bool("s", false, "только строки, содержащие разделитель")
+	flag.Parse()
+	// Проверяем обязательный флаг -f
+	if *fieldsFlag == "" {
+		fmt.Fprintf(os.Stderr, "Ошибка: необходимо указать флаг -f\n")
+		fmt.Fprintf(os.Stderr, "Использование: %s -f \"поля\" [-d \"разделитель\"] [-s]\n", os.Args[0])
+		os.Exit(1)
+	}
+	// Создаем селектор полей
+	selector, err := NewFieldSelector(*fieldsFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Ошибка в формате полей: %v\n", err)
+		os.Exit(1)
+	}
+	// Обработка ввода
+	reader := bufio.NewReader(os.Stdin)
+	writer := bufio.NewWriter(os.Stdout)
+	defer writer.Flush()
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "Ошибка чтения: %v\n", err)
+			os.Exit(1)
+		}
+		// Удаляем символ новой строки
+		line = strings.TrimRight(line, "\n")
+		// Обрабатываем строку
+		result, shouldOutput := ProcessLine(line, *delimiterFlag, *separatedFlag, selector)
+		if shouldOutput {
+			writer.WriteString(result + "\n")
+		}
+	}
+}
+
+
+TEST
+
+package main
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+func TestNewFieldSelector(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr bool
+	}{
+		{"одиночное поле", "1", false},
+		{"несколько полей", "1,3,5", false},
+		{"диапазон", "1-5", false},
+		{"комбинация", "1,3-5,7", false},
+		{"неверный диапазон", "1-", true},
+		{"неверное поле", "abc", true},
+		{"отрицательное поле", "-1", true},
+		{"нулевое поле", "0", true},
+		{"диапазон с пробелами", "1 - 3", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewFieldSelector(tt.spec)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NewFieldSelector() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFieldSelector_SelectFields(t *testing.T) {
+	selector, _ := NewFieldSelector("1,3-5")
+	fields := []string{"a", "b", "c", "d", "e", "f"}
+	result := selector.SelectFields(fields)
+	expected := []string{"a", "c", "d", "e"}
+	if len(result) != len(expected) {
+		t.Errorf("SelectFields() returned %d fields, expected %d", len(result), len(expected))
+	}
+	for i := range result {
+		if result[i] != expected[i] {
+			t.Errorf("SelectFields()[%d] = %s, expected %s", i, result[i], expected[i])
+		}
+	}
+	// Тест с полями за границами
+	selector2, _ := NewFieldSelector("1,10-12")
+	result2 := selector2.SelectFields(fields)
+	if len(result2) != 1 || result2[0] != "a" {
+		t.Errorf("SelectFields() with out of bounds = %v, expected [a]", result2)
+	}
+}
+
+func TestProcessLine(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		delimiter     string
+		onlySeparated bool
+		selector      *FieldSelector
+		wantOutput    string
+		wantShouldOut bool
+	}{
+		{
+			name:          "базовый тест",
+			line:          "a\tb\tc\td\te",
+			delimiter:     "\t",
+			onlySeparated: false,
+			selector:      mustNewSelector("1,3,5"),
+			wantOutput:    "a\tc\te",
+			wantShouldOut: true,
+		},
+		{
+			name:          "только с разделителем - есть",
+			line:          "a,b,c,d,e",
+			delimiter:     ",",
+			onlySeparated: true,
+			selector:      mustNewSelector("1,3"),
+			wantOutput:    "a,c",
+			wantShouldOut: true,
+		},
+		{
+			name:          "только с разделителем - нет",
+			line:          "abc",
+			delimiter:     ",",
+			onlySeparated: true,
+			selector:      mustNewSelector("1,3"),
+			wantOutput:    "",
+			wantShouldOut: false,
+		},
+		{
+			name:          "диапазон полей",
+			line:          "1:2:3:4:5:6",
+			delimiter:     ":",
+			onlySeparated: false,
+			selector:      mustNewSelector("2-4"),
+			wantOutput:    "2:3:4",
+			wantShouldOut: true,
+		},
+		{
+			name:          "нет разделителя",
+			line:          "abc",
+			delimiter:     "\t",
+			onlySeparated: false,
+			selector:      mustNewSelector("1"),
+			wantOutput:    "abc",
+			wantShouldOut: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, shouldOut := ProcessLine(tt.line, tt.delimiter, tt.onlySeparated, tt.selector)
+			if shouldOut != tt.wantShouldOut {
+				t.Errorf("ProcessLine() shouldOut = %v, want %v", shouldOut, tt.wantShouldOut)
+			}
+			if output != tt.wantOutput {
+				t.Errorf("ProcessLine() output = %v, want %v", output, tt.wantOutput)
+			}
+		})
+	}
+}
+
+func TestIntegration(t *testing.T) {
+	input := `a	b	c	d	e
+f	g	h	i	j
+no_delimiter
+k	l	m	n	o
+`
+	expected := `a	c
+f	h
+k	m
+`
+	var buf bytes.Buffer
+	reader := strings.NewReader(input)
+	writer := &buf
+	selector, _ := NewFieldSelector("1,3")
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		result, shouldOutput := ProcessLine(line, "\t", false, selector)
+		if shouldOutput {
+			writer.WriteString(result + "\n")
+		}
+	}
+	if buf.String() != expected {
+		t.Errorf("Integration test failed.\nGot:\n%s\nExpected:\n%s", buf.String(), expected)
+	}
+}
+
+func mustNewSelector(spec string) *FieldSelector {
+	selector, err := NewFieldSelector(spec)
+	if err != nil {
+		panic(err)
+	}
+	return selector
+}
