@@ -1,0 +1,38 @@
+func or(channels ...<-chan interface{}) <-chan interface{} {
+    // Базовые случаи рекурсии
+    switch len(channels) {
+    case 0:
+        // Если каналов нет, возвращаем уже закрытый канал
+        c := make(chan interface{})
+        close(c)
+        return c
+    case 1:
+        // Если канал один, просто возвращаем его
+        return channels[0]
+    }
+
+    // Рекурсивное объединение каналов
+    orDone := make(chan interface{})
+    
+    go func() {
+        defer close(orDone)
+        
+        switch len(channels) {
+        case 2:
+            // Случай для двух каналов
+            select {
+            case <-channels[0]:
+            case <-channels[1]:
+            }
+        default:
+            // Для более чем двух каналов используем рекурсию
+            select {
+            case <-channels[0]:
+            case <-channels[1]:
+            case <-or(append(channels[2:], orDone)...):
+            }
+        }
+    }()
+    
+    return orDone
+}
