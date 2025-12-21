@@ -1,0 +1,510 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Shell представляет интерпретатор командной строки
+type Shell struct {
+	prompt      string
+	history     []string
+	interactive bool
+}
+
+// NewShell создает новый экземпляр shell
+func NewShell() *Shell {
+	return &Shell{
+		prompt:      "mysh> ",
+		interactive: true,
+	}
+}
+
+// SetPrompt устанавливает приглашение командной строки
+func (s *Shell) SetPrompt(prompt string) {
+	s.prompt = prompt
+}
+
+// Run запускает shell
+func (s *Shell) Run() {
+	// Обработка сигналов
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Определяем, интерактивный ли режим
+	stat, _ := os.Stdin.Stat()
+	s.interactive = (stat.Mode() & os.ModeCharDevice) != 0
+
+	if s.interactive {
+		fmt.Println("Simple Unix Shell")
+		fmt.Println("Type 'exit' to quit")
+	}
+
+	for {
+		if s.interactive {
+			fmt.Print(s.prompt)
+		}
+
+		// Чтение ввода
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("\nEOF received. Exiting...")
+				break
+			}
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			continue
+		}
+
+		// Удаляем символ новой строки
+		input = strings.TrimSpace(input)
+		if input == "" {
+			continue
+		}
+
+		// Добавляем в историю
+		s.history = append(s.history, input)
+
+		// Обработка выхода
+		if input == "exit" {
+			break
+		}
+
+		// Выполнение команды
+		s.executeCommand(input)
+	}
+}
+
+// executeCommand выполняет команду
+func (s *Shell) executeCommand(input string) {
+	// Разбиваем на команды по конвейерам
+	commands := strings.Split(input, "|")
+	if len(commands) > 1 {
+		// Выполняем конвейер
+		s.executePipeline(commands)
+		return
+	}
+
+	// Разбиваем команду на аргументы
+	args := parseArgs(input)
+	if len(args) == 0 {
+		return
+	}
+
+	// Проверяем встроенные команды
+	if s.isBuiltin(args[0]) {
+		s.executeBuiltin(args)
+		return
+	}
+
+	// Выполняем внешнюю команду
+	s.executeExternal(args, nil, nil)
+}
+
+// parseArgs разбирает строку на аргументы с учетом кавычек
+func parseArgs(input string) []string {
+	var args []string
+	var current strings.Builder
+	inQuotes := false
+	quoteChar := byte(0)
+
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+
+		switch {
+		case ch == '"' || ch == '\'':
+			if inQuotes && ch == quoteChar {
+				inQuotes = false
+			} else if !inQuotes {
+				inQuotes = true
+				quoteChar = ch
+			} else {
+				current.WriteByte(ch)
+			}
+		case ch == ' ' && !inQuotes:
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteByte(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+
+	// Обработка переменных окружения
+	for i, arg := range args {
+		args[i] = expandEnvVars(arg)
+	}
+
+	return args
+}
+
+// expandEnvVars заменяет переменные окружения на их значения
+func expandEnvVars(arg string) string {
+	var result strings.Builder
+	i := 0
+
+	for i < len(arg) {
+		if arg[i] == '$' && i+1 < len(arg) {
+			// Обработка переменной окружения
+			start := i + 1
+			if arg[start] == '{' {
+				// Формат ${VAR}
+				end := strings.Index(arg[start:], "}")
+				if end != -1 {
+					varName := arg[start+1 : start+end]
+					result.WriteString(os.Getenv(varName))
+					i = start + end + 1
+					continue
+				}
+			} else {
+				// Формат $VAR
+				j := start
+				for j < len(arg) && (isAlphaNum(arg[j]) || arg[j] == '_') {
+					j++
+				}
+				varName := arg[start:j]
+				result.WriteString(os.Getenv(varName))
+				i = j
+				continue
+			}
+		}
+		result.WriteByte(arg[i])
+		i++
+	}
+
+	return result.String()
+}
+
+// isAlphaNum проверяет, является ли символ буквой или цифрой
+func isAlphaNum(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+}
+
+// executePipeline выполняет конвейер команд
+func (s *Shell) executePipeline(commands []string) {
+	if len(commands) == 0 {
+		return
+	}
+
+	var prevOutput io.Reader
+	var cmds []*exec.Cmd
+
+	// Создаем команды для конвейера
+	for i, cmdStr := range commands {
+		args := parseArgs(strings.TrimSpace(cmdStr))
+		if len(args) == 0 {
+			fmt.Fprintf(os.Stderr, "Invalid command in pipeline\n")
+			return
+		}
+
+		var cmd *exec.Cmd
+		if s.isBuiltin(args[0]) {
+			// Для встроенных команд в конвейере используем exec
+			fmt.Fprintf(os.Stderr, "Builtin commands not supported in pipeline: %s\n", args[0])
+			return
+		}
+
+		// Создаем внешнюю команду
+		if len(args) > 1 {
+			cmd = exec.Command(args[0], args[1:]...)
+		} else {
+			cmd = exec.Command(args[0])
+		}
+
+		// Настраиваем ввод/вывод
+		if i > 0 {
+			cmd.Stdin = prevOutput
+		}
+
+		if i < len(commands)-1 {
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating pipe: %v\n", err)
+				return
+			}
+			prevOutput = stdout
+		} else {
+			cmd.Stdout = os.Stdout
+		}
+
+		cmd.Stderr = os.Stderr
+		cmds = append(cmds, cmd)
+	}
+
+	// Запускаем все команды
+	for _, cmd := range cmds {
+		err := cmd.Start()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting command: %v\n", err)
+			return
+		}
+	}
+
+	// Ожидаем завершения всех команд
+	for _, cmd := range cmds {
+		err := cmd.Wait()
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				fmt.Fprintf(os.Stderr, "Command failed with exit code %d\n", exitErr.ExitCode())
+			}
+		}
+	}
+}
+
+// isBuiltin проверяет, является ли команда встроенной
+func (s *Shell) isBuiltin(cmd string) bool {
+	builtins := map[string]bool{
+		"cd":    true,
+		"pwd":   true,
+		"echo":  true,
+		"kill":  true,
+		"ps":    true,
+		"exit":  true,
+		"clear": true,
+	}
+	return builtins[cmd]
+}
+
+// executeBuiltin выполняет встроенную команду
+func (s *Shell) executeBuiltin(args []string) {
+	switch args[0] {
+	case "cd":
+		s.cd(args)
+	case "pwd":
+		s.pwd()
+	case "echo":
+		s.echo(args[1:])
+	case "kill":
+		s.kill(args)
+	case "ps":
+		s.ps()
+	case "clear":
+		s.clear()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown builtin command: %s\n", args[0])
+	}
+}
+
+// cd меняет текущую директорию
+func (s *Shell) cd(args []string) {
+	var dir string
+	if len(args) > 1 {
+		dir = args[1]
+	} else {
+		// Переход в домашнюю директорию
+		dir = os.Getenv("HOME")
+		if dir == "" {
+			fmt.Fprintln(os.Stderr, "cd: HOME not set")
+			return
+		}
+	}
+
+	err := os.Chdir(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cd: %v\n", err)
+	}
+}
+
+// pwd выводит текущую директорию
+func (s *Shell) pwd() {
+	dir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pwd: %v\n", err)
+		return
+	}
+	fmt.Println(dir)
+}
+
+// echo выводит аргументы
+func (s *Shell) echo(args []string) {
+	fmt.Println(strings.Join(args, " "))
+}
+
+// kill посылает сигнал процессу
+func (s *Shell) kill(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "kill: missing operand")
+		return
+	}
+
+	pid, err := strconv.Atoi(args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kill: invalid PID: %s\n", args[1])
+		return
+	}
+
+	signal := syscall.SIGTERM
+	if len(args) > 2 {
+		sigName := args[2]
+		switch strings.ToUpper(sigName) {
+		case "KILL", "9":
+			signal = syscall.SIGKILL
+		case "INT", "2":
+			signal = syscall.SIGINT
+		case "HUP", "1":
+			signal = syscall.SIGHUP
+		case "STOP", "19":
+			signal = syscall.SIGSTOP
+		case "CONT", "18":
+			signal = syscall.SIGCONT
+		default:
+			fmt.Fprintf(os.Stderr, "kill: unknown signal: %s\n", sigName)
+			return
+		}
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kill: %v\n", err)
+		return
+	}
+
+	err = process.Signal(signal)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kill: %v\n", err)
+	}
+}
+
+// ps выводит список процессов
+func (s *Shell) ps() {
+	// Простая реализация через вызов системной команды ps
+	cmd := exec.Command("ps", "aux")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ps: %v\n", err)
+	}
+}
+
+// clear очищает экран
+func (s *Shell) clear() {
+	fmt.Print("\033[H\033[2J")
+}
+
+// executeExternal выполняет внешнюю команду
+func (s *Shell) executeExternal(args []string, stdin io.Reader, stdout io.Writer) {
+	// Проверяем наличие редиректов
+	var inputFile, outputFile string
+	var argsWithoutRedirects []string
+
+	for _, arg := range args {
+		if strings.HasPrefix(arg, ">") {
+			if len(arg) > 1 {
+				outputFile = arg[1:]
+			}
+		} else if strings.HasPrefix(arg, "<") {
+			if len(arg) > 1 {
+				inputFile = arg[1:]
+			}
+		} else if strings.HasPrefix(arg, ">>") {
+			if len(arg) > 2 {
+				outputFile = arg[2:]
+				// Здесь нужно было бы установить флаг append
+			}
+		} else {
+			argsWithoutRedirects = append(argsWithoutRedirects, arg)
+		}
+	}
+
+	if len(argsWithoutRedirects) == 0 {
+		return
+	}
+
+	// Создаем команду
+	var cmd *exec.Cmd
+	if len(argsWithoutRedirects) > 1 {
+		cmd = exec.Command(argsWithoutRedirects[0], argsWithoutRedirects[1:]...)
+	} else {
+		cmd = exec.Command(argsWithoutRedirects[0])
+	}
+
+	// Настраиваем стандартные потоки
+	if stdin != nil {
+		cmd.Stdin = stdin
+	} else if inputFile != "" {
+		file, err := os.Open(inputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
+			return
+		}
+		defer file.Close()
+		cmd.Stdin = file
+	} else {
+		cmd.Stdin = os.Stdin
+	}
+
+	if stdout != nil {
+		cmd.Stdout = stdout
+	} else if outputFile != "" {
+		file, err := os.Create(outputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+			return
+		}
+		defer file.Close()
+		cmd.Stdout = file
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+
+	cmd.Stderr = os.Stderr
+
+	// Запускаем команду
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			fmt.Fprintf(os.Stderr, "Command failed with exit code %d\n", exitErr.ExitCode())
+		} else {
+			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
+		}
+	}
+}
+
+// executeConditional выполняет команды с условным выполнением (&& и ||)
+func (s *Shell) executeConditional(input string) {
+	// Разбиваем по && и ||
+	parts := strings.FieldsFunc(input, func(r rune) bool {
+		return r == '&' || r == '|'
+	})
+	// TODO: Реализовать логику условного выполнения
+	// Пока просто выполняем команды последовательно
+	for _, part := range parts {
+		s.executeCommand(strings.TrimSpace(part))
+	}
+}
+
+// Основная функция
+func main() {
+	shell := NewShell()
+	// Обработка Ctrl+C
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for range c {
+			// Просто игнорируем Ctrl+C, не завершаем shell
+			fmt.Println("\nType 'exit' to quit")
+			if shell.interactive {
+				fmt.Print(shell.prompt)
+			}
+		}
+	}()
+	// Запуск shell
+	shell.Run()
+}
