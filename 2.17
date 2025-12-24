@@ -1,0 +1,117 @@
+package main
+
+import (
+    "bufio"
+    "flag"
+    "fmt"
+    "io"
+    "net"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+)
+
+func main() {
+    // Парсим аргументы командной строки
+    timeout := flag.Int("timeout", 10, "Connection timeout in seconds")
+    flag.Parse()
+
+    // Проверяем, что указаны хост и порт
+    args := flag.Args()
+    if len(args) < 2 {
+        fmt.Println("Usage: go-telnet [--timeout=10] host port")
+        os.Exit(1)
+    }
+
+    host := args[0]
+    port := args[1]
+    address := net.JoinHostPort(host, port)
+
+    // Устанавливаем соединение с таймаутом
+    conn, err := net.DialTimeout("tcp", address, time.Duration(*timeout)*time.Second)
+    if err != nil {
+        fmt.Printf("Failed to connect to %s: %v\n", address, err)
+        os.Exit(1)
+    }
+    defer conn.Close()
+
+    fmt.Printf("Connected to %s\n", address)
+
+    // Канал для завершения программы
+    done := make(chan struct{})
+    defer close(done)
+
+    // Обработка сигналов для корректного завершения
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+    // Чтение из сокета и вывод в STDOUT
+    go func() {
+        reader := bufio.NewReader(conn)
+        buf := make([]byte, 4096)
+        
+        for {
+            select {
+            case <-done:
+                return
+            default:
+                // Устанавливаем таймаут на чтение, чтобы можно было проверить done
+                conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+                
+                n, err := reader.Read(buf)
+                if err != nil {
+                    if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+                        continue
+                    }
+                    if err == io.EOF {
+                        fmt.Println("\nServer closed connection")
+                    } else {
+                        fmt.Printf("\nError reading from socket: %v\n", err)
+                    }
+                    done <- struct{}{}
+                    return
+                }
+                
+                if n > 0 {
+                    os.Stdout.Write(buf[:n])
+                }
+            }
+        }
+    }()
+
+    // Чтение из STDIN и запись в сокет
+    go func() {
+        scanner := bufio.NewScanner(os.Stdin)
+        
+        for scanner.Scan() {
+            select {
+            case <-done:
+                return
+            default:
+                line := scanner.Text() + "\n"
+                _, err := conn.Write([]byte(line))
+                if err != nil {
+                    fmt.Printf("Error writing to socket: %v\n", err)
+                    done <- struct{}{}
+                    return
+                }
+            }
+        }
+        
+        if err := scanner.Err(); err != nil {
+            fmt.Printf("Error reading from stdin: %v\n", err)
+        }
+        
+        // Если достигнут EOF (Ctrl+D), завершаем работу
+        done <- struct{}{}
+    }()
+
+    // Ожидание завершения
+    select {
+    case <-sigChan:
+        fmt.Println("\nInterrupted by signal")
+    case <-done:
+        fmt.Println("Connection closed")
+    }
+}
